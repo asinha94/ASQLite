@@ -11,7 +11,7 @@ CPPFLAGS := -g $(WARNINGS) -std=c++17 -fno-exceptions $(INCLUDES)
 
 CPP_SRC   := $(shell find $(PREFIX)/ -name *.cpp)
 CPP_OBJS  := $(CPP_SRC:%.cpp=%.o)
-BIN       := asqlite
+BIN       := $(PREFIX)/asqlite
 
 .PHONY: clean
 .SUFFIXES: .o .cpp
@@ -22,5 +22,8 @@ BIN       := asqlite
 build: $(CPP_OBJS)
 	$(CPP) $(CPPFLAGS) $(CPP_OBJS) -o $(BIN)
 
+run: $(BIN)
+	@$(BIN) 
+
 clean:
-	@rm -rf $(BIN) $(CPP_OBJS) 
+	@rm -rf $(BIN) $(CPP_OBJS) $(BIN).dSYM
