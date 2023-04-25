@@ -73,7 +73,7 @@ namespace asql {
 
 
     static std::string LexerString;
-    static double      LexerNumber;
+    static float       LexerFloat;
     static int         LexerInteger;
     static Tok         CurrToken;
 
@@ -81,7 +81,6 @@ namespace asql {
     Tok GetToken() {
         // Initialize with space so we dont return on the first loop
         static int LastChar = ' ';
-
         // Have to catch the newlines before they get eaten
         if (LastChar == '\n' || LastChar == '\r') {
             LastChar = ' ';
@@ -89,7 +88,7 @@ namespace asql {
         }
         
         if (LastChar == ';') {
-            LastChar = ' '; // reinit
+            LastChar = ' ';
             return T_NULL;
         }
 
@@ -128,7 +127,7 @@ namespace asql {
                 LastChar = getchar();
             } while (isdigit(LastChar) || LastChar == '.');
 
-            LexerNumber = strtod(NumStr.c_str(), 0);
+            LexerFloat = strtof(NumStr.c_str(), 0);
             return T_RAW_FLOAT;
         }
 
@@ -160,12 +159,14 @@ namespace asql {
     class Expr {
     public:
         virtual ~Expr()  = default;
+        virtual float eval() {return 0;}
     };
 
-    class CommandExpr: public Expr {
+    class FunctionExpr: public Expr {
     public:
-    CommandExpr(const std::string &name): name{name} {}
-    std::string name;  
+    FunctionExpr(const std::string &name): name{name} {}
+    std::string name;
+    std::vector<Expr> args;
     };
 
     class VariableExpr: public Expr {
@@ -174,10 +175,11 @@ namespace asql {
         std::string name;
     };
 
-    class NumberExpr: public Expr {
+    class FloatExpr: public Expr {
     public:
-        NumberExpr(double number): number{number} {}
-        double number;
+        FloatExpr(float number): number{number} {}
+        float number;
+        virtual float eval() { return number;}
     };
 
     class BinaryExpr: public Expr {
@@ -186,6 +188,21 @@ namespace asql {
             op{op},
             lhs{std::move(lhs)},
             rhs{std::move(rhs)} {}
+
+            virtual float eval() {
+                auto l = lhs->eval();
+                auto r = rhs->eval();
+                printf("l: %.4f, r: %.4f, l%cr = %.4f", l, r, l+r);
+
+                switch (op) {
+                case '*': return l * r;
+                case '/': return l / r;
+                case '-': return l - r;
+                case '+': return l + r;
+                default: break;
+                }
+                return 0;
+            }
 
         int op;
         std::unique_ptr<Expr> lhs, rhs;
@@ -199,13 +216,16 @@ namespace asql {
 
     /* Parsing Functions */
     static std::unique_ptr<Expr> ParsePrimaryExpr();
+    static std::unique_ptr<Expr> ParseExpr();
 
 
     static std::unique_ptr<Expr> ParseParenExpr()
     {
         // eat the  opening parenthesis i.e (
         GetNextToken();
-        auto e = ParsePrimaryExpr();
+
+        // Parse some arbitrarily long expression
+        auto e = ParseExpr();
         if (!e)
             return nullptr;
 
@@ -252,9 +272,9 @@ namespace asql {
         
     }
 
-    static std::unique_ptr<NumberExpr> ParseNumber()
+    static std::unique_ptr<FloatExpr> ParseFloat()
     {
-        auto e = std::make_unique<NumberExpr>(NumberExpr(LexerNumber));
+        auto e = std::make_unique<FloatExpr>(FloatExpr(LexerFloat));
         GetNextToken();
         return e;
     }
@@ -274,15 +294,24 @@ namespace asql {
             case '(':
                 return ParseParenExpr();
             case T_RAW_FLOAT:
-                return ParseNumber();
+                return ParseFloat();
             case T_RAW_VAR:
                 return ParseIdentifier();
             //case '\'':
             //case '\"':
             default:
-                printf("");
+                printf("Can't parse primary expression: %d\n", CurrToken);
                 return nullptr;
         }
+    }
+
+    static std::unique_ptr<Expr> ParseExpr()
+    {
+        auto e = ParsePrimaryExpr();
+        if (!e)
+            return nullptr;
+        // If its not a binary expression, it will just return e back to us
+        return ParseBinOpenRHS(0, std::move(e));
     }
 
 
@@ -303,16 +332,26 @@ namespace asql {
         while ( true ) {
             // parse the columns to select
             GetNextToken();
-            auto e = ParsePrimaryExpr();
+            auto e = ParseExpr();
             if (!e)
                 return nullptr;
             SelectArgs.push_back(std::move(e));
 
-            // Check for a comma
-            GetNextToken();
+            // Check for identifier for the column
+            // check for AS identifier
+
             if (CurrToken != ',')
                 break;            
         }
+
+        double result = 0;
+        printf("Parsed select args: ");
+        for (auto &arg : SelectArgs)
+        {
+            printf("%.4f, ", arg->eval());
+        }
+        printf("\n");
+        return nullptr;
 
         // Parsed all of the select arguments, now need check the table
         
@@ -320,7 +359,8 @@ namespace asql {
 
     void ClearTokenLineBuffer()
     {
-        while (asql::GetNextToken() != asql::T_ENTER);
+        while (CurrToken != asql::T_ENTER && CurrToken != asql::T_NULL)
+            asql::GetNextToken();
     }
 }
 
@@ -350,8 +390,13 @@ int main()
 
         case asql::T_QRY_SELECT:
             qry = asql::ParseSelectQuery();
-            if (qry) q.push_back(std::move(qry));
-            else asql::ClearTokenLineBuffer();
+            if (qry) {
+                q.push_back(std::move(qry));
+                break;
+            }
+
+            printf("failied to parse query!\n");
+            asql::ClearTokenLineBuffer();
             break;
 
 
