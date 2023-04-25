@@ -1,31 +1,80 @@
 #include <cstdio>
 #include <vector>
+#include <unordered_map>
 #include <memory>
 #include <string>
+#include <algorithm>
 
-const char * sql = "SELECT * from table;";
+#define LOG(...) printf(__VA_ARGS__)
 
-
-
-namespace Token {
+namespace asql {
 
     enum Tok {
-        // Only called at the end of the string
-        T_NULL = 0,
-        T_EOF = -1,
+        // Only called at the end of the string or statement
+        T_NULL   =  0,
+        T_EOF    = -1,
+        T_ENTER  = -2,
 
         // commands
+        T_QRY_SELECT = -3,
+        T_QRY_DELETE = -4,
+        T_QRY_UPDATE = -5,
+        T_QRY_INSERT = -6,
+        T_QRY_CREATE = -7,
 
-        // primary
-        T_CMD = -2,
-        T_NUM = -4,
-        T_STR = -5,
-        T_ID  = -6,
+        // Keywords        
+        T_KEY_FROM   = -12,
+        T_KEY_WHERE  = -13,
+        T_KEY_LIMIT  = -14,
+        T_KEY_ORDER  = -15,
+        T_KEY_BY     = -16,
+        T_KEY_GROUP  = -17,
+        T_KEY_INTO   = -18,
+        T_KEY_VALUES = -19,
+        T_KEY_JOIN   = -20,
+        T_KEY_ON     = -21,
+        T_KEY_AS     = -22,
+        T_KEY_TABLE  = -23,
+
+        // Raw values or variables
+        T_RAW_FLOAT  = -30,
+        T_RAW_STR    = -31,
+        T_RAW_VAR    = -32,
+    };
+
+    /* Defines precendence for binary operations */
+    static std::unordered_map<char, int> LexerBinOpPrecedent = {
+        {'+', 10},
+        {'-', 10},
+        {'/', 20},
+        {'*', 20}
+    };
+
+    /* Defines */
+    static std::unordered_map<std::string, int> LexerKeywords = {
+        {"AS",     T_KEY_AS},
+        {"BY",     T_KEY_BY},
+        {"CREATE", T_QRY_CREATE},
+        {"DELETE", T_QRY_DELETE},
+        {"FROM",   T_KEY_FROM},
+        {"GROUP",  T_KEY_GROUP},
+        {"INSERT", T_QRY_INSERT},
+        {"INTO",   T_KEY_INTO},
+        {"JOIN",   T_KEY_JOIN},
+        {"LIMIT",  T_KEY_LIMIT},
+        {"ORDER",  T_KEY_ORDER},
+        {"ON",     T_KEY_ON},
+        {"SELECT", T_QRY_SELECT},
+        {"TABLE",  T_KEY_TABLE},
+        {"UPDATE", T_QRY_UPDATE},
+        {"VALUES", T_KEY_VALUES},
+        {"WHERE",  T_KEY_WHERE}
     };
 
 
     static std::string LexerString;
     static double      LexerNumber;
+    static int         LexerInteger;
     static Tok         CurrToken;
 
 
@@ -34,8 +83,13 @@ namespace Token {
         static int LastChar = ' ';
 
         // Have to catch the newlines before they get eaten
-        if (LastChar == '\n' || LastChar == '\r' || LastChar == ';') {
+        if (LastChar == '\n' || LastChar == '\r') {
             LastChar = ' ';
+            return T_ENTER;
+        }
+        
+        if (LastChar == ';') {
+            LastChar = ' '; // reinit
             return T_NULL;
         }
 
@@ -47,17 +101,22 @@ namespace Token {
         if (isalpha(LastChar)) {
             // Fill in the string
             // TODO: Optimize, use string_view
-            LexerString = LastChar;
+            char FirstChar = LastChar;
+            LexerString = ::toupper(FirstChar);
             while (isalnum((LastChar = getchar())))
-                LexerString += LastChar;
+                LexerString += ::toupper(LastChar);
 
-            // Check for SQL commands
-            if (LexerString == "SELECT" || LexerString == "UPDATE")
-                return Token::T_CMD;
+            auto keyword = LexerKeywords.find(LexerString);
+            if ( keyword != LexerKeywords.end() )
+                return static_cast<Tok>(keyword->second);
 
-            // String
+            return T_RAW_VAR;
+        }
 
-            return Token::T_ID;
+        // Parse string literals
+        if (LastChar == '"' || LastChar == '\'') {
+            int terminating_char = LastChar;
+
         }
 
         // Parse numbers
@@ -70,7 +129,7 @@ namespace Token {
             } while (isdigit(LastChar) || LastChar == '.');
 
             LexerNumber = strtod(NumStr.c_str(), 0);
-            return Token::T_NUM;
+            return T_RAW_FLOAT;
         }
 
         // Remove comments
@@ -97,133 +156,219 @@ namespace Token {
         return CurrToken = GetToken();
     }
 
-}
-
-
-namespace AST {
-
+    /* Expressions */
     class Expr {
     public:
         virtual ~Expr()  = default;
     };
 
-    class VariableExpr {
+    class CommandExpr: public Expr {
+    public:
+    CommandExpr(const std::string &name): name{name} {}
+    std::string name;  
+    };
+
+    class VariableExpr: public Expr {
     public:
         VariableExpr(const std::string &name): name{name} {}
-
-        static std::unique_ptr<VariableExpr> Create()
-        {
-            auto e = std::make_unique<VariableExpr>(Token::LexerString);
-            Token::GetNextToken();
-            return e;
-        }
-
         std::string name;
     };
 
-    class NumberExpr {
+    class NumberExpr: public Expr {
     public:
         NumberExpr(double number): number{number} {}
-        
-        static std::unique_ptr<NumberExpr> Create(double number)
-        {
-            auto e = std::make_unique<NumberExpr>(number);
-            Token::GetNextToken();
-            return e;
-        }
-        
         double number;
     };
 
-    class BinaryExpr {
+    class BinaryExpr: public Expr {
     public:
-        BinaryExpr(char op, std::unique_ptr<Expr> lhs, std::unique_ptr<Expr> rhs):
+        BinaryExpr(int op, std::unique_ptr<Expr> lhs, std::unique_ptr<Expr> rhs):
             op{op},
             lhs{std::move(lhs)},
             rhs{std::move(rhs)} {}
 
-        char op;
+        int op;
         std::unique_ptr<Expr> lhs, rhs;
     };
 
-    static std::unique_ptr<Expr> ParseParenExpr();
-
-    static std::unique_ptr<Expr> ParseExpr()
-    {
-
-        switch(Token::CurrToken)
-        {
-            case '(':
-                return ParseParenExpr();
-            case '\'':
-            case '\"':
-                //return ParseStringExpr(Token::CurrToken);
-                return nullptr;
-
-            default:
-                // log
-                return nullptr;
-        }
+    static int GetTokPrecedence() {
+        if (auto f = LexerBinOpPrecedent.find(CurrToken); f != LexerBinOpPrecedent.end())
+            return f->second;
+        return -1;
     }
-    
+
+    /* Parsing Functions */
+    static std::unique_ptr<Expr> ParsePrimaryExpr();
 
 
     static std::unique_ptr<Expr> ParseParenExpr()
     {
         // eat the  opening parenthesis i.e (
-        Token::GetNextToken();
-        auto e = ParseExpr();
+        GetNextToken();
+        auto e = ParsePrimaryExpr();
         if (!e)
             return nullptr;
 
-        if (Token::CurrToken != ')') {
+        if (CurrToken != ')') {
             // Log an error
             return nullptr;
         }
 
-        // eat the )
-        Token::GetNextToken();
+        // eat the closing parenthesis
+        GetNextToken();
         return e;
 
     }
 
+    static std::unique_ptr<Expr> ParseBinOpenRHS(int MinTokPrec, std::unique_ptr<Expr> lhs)
+    {
+        while (true) {
+            int CurrTokPrec = GetTokPrecedence();
+        
+            // Next operator has lower or similar precedence as previous operator
+            if (CurrTokPrec <= MinTokPrec)
+                return lhs;
+
+            // save the operator and advance to the next token
+            int binOp = CurrToken;
+            GetNextToken();
+            auto rhs = ParsePrimaryExpr();
+            
+            if (!rhs)
+                return nullptr;
+
+            // Check whether the next operator has higher precendence
+            // ParseExpr() would have already advanced to the next token
+            // If so merge those 2 expressions into a single expression
+            int NextTokPrec = GetTokPrecedence();
+            if (CurrTokPrec < NextTokPrec) {
+                rhs = ParseBinOpenRHS(CurrTokPrec, std::move(rhs));
+                if (!rhs)
+                    return nullptr;
+            }
+
+            lhs = std::make_unique<Expr>(BinaryExpr(binOp, std::move(lhs), std::move(rhs)));
+        }
+        
+    }
+
+    static std::unique_ptr<NumberExpr> ParseNumber()
+    {
+        auto e = std::make_unique<NumberExpr>(NumberExpr(LexerNumber));
+        GetNextToken();
+        return e;
+    }
+
+    static std::unique_ptr<Expr> ParseIdentifier()
+    {
+        auto e = std::make_unique<VariableExpr>(VariableExpr(LexerString));
+        GetNextToken();
+        return e;
+    }
+
+
+    static std::unique_ptr<Expr> ParsePrimaryExpr()
+    {
+        switch(CurrToken)
+        {
+            case '(':
+                return ParseParenExpr();
+            case T_RAW_FLOAT:
+                return ParseNumber();
+            case T_RAW_VAR:
+                return ParseIdentifier();
+            //case '\'':
+            //case '\"':
+            default:
+                printf("");
+                return nullptr;
+        }
+    }
+
+
+    class Query {
+    public:
+        virtual ~Query()  = default;
+    };
+
+    class SelectQuery : Query {
+    public:
+        SelectQuery() {}
+    };
+
+    static std::unique_ptr<Query> ParseSelectQuery()
+    {
+        std::vector<std::unique_ptr<asql::Expr>> SelectArgs;
+
+        while ( true ) {
+            // parse the columns to select
+            GetNextToken();
+            auto e = ParsePrimaryExpr();
+            if (!e)
+                return nullptr;
+            SelectArgs.push_back(std::move(e));
+
+            // Check for a comma
+            GetNextToken();
+            if (CurrToken != ',')
+                break;            
+        }
+
+        // Parsed all of the select arguments, now need check the table
+        
+    }
+
+    void ClearTokenLineBuffer()
+    {
+        while (asql::GetNextToken() != asql::T_ENTER);
+    }
 }
+
 
 int main()
 {
 
+    std::vector<std::unique_ptr<asql::Query>> q;
+    std::unique_ptr<asql::Query> qry = nullptr;
+ 
     while ( true ) {
-        //printf("SQL> ");
-        Token::Tok token = Token::GetNextToken();
+        printf("SQL> ");
+        auto token = asql::GetNextToken();
         switch (token)
         {
-        case Token::T_NULL:
-            printf("Got NULL\n");
-            break;
-
-
-        case Token::T_CMD:
-            printf("CMD: %s\n", Token::LexerString.c_str());
-            break;
-
-        case Token::T_ID:
-            printf("ID: %s\n", Token::LexerString.c_str());
-            break;
-        
-        case Token::T_NUM:
-            printf("NUM: %f\n", Token::LexerNumber);
-            break;
-
-        case Token::T_EOF:
+        case asql::T_EOF:
             return 0;
+
+        case asql::T_NULL:
+            printf("NULL");
+            //asql::ParseExpression(v);
+            break;
+
+        case asql::T_ENTER:
+            printf("Enter\n");
+            break;
+
+        case asql::T_QRY_SELECT:
+            qry = asql::ParseSelectQuery();
+            if (qry) q.push_back(std::move(qry));
+            else asql::ClearTokenLineBuffer();
+            break;
+
+
+        case asql::T_QRY_INSERT:
+        case asql::T_QRY_DELETE:
+        case asql::T_QRY_UPDATE:
+        case asql::T_QRY_CREATE:
+            printf("The Query: %d\n", token);
+            break;
         
         default:
-            printf("Other: %c\n", token);
+            printf("Malformed SQL query. Only basic SELECT, CREATE, INSERT, UPDATE and DELETE supported\n");
+            printf("Token: %d, var: %s\n", token, asql::LexerString.c_str());
+            asql::ClearTokenLineBuffer();
             break;
         }
     }
-
-    
 
     return 0;
 }
