@@ -1,159 +1,9 @@
-#include <cstdio>
-#include <vector>
-#include <unordered_map>
 #include <memory>
 #include <string>
-#include <algorithm>
 
-#define LOG(...) printf(__VA_ARGS__)
+#include "lexer.h"
 
 namespace asql {
-
-    enum Tok {
-        // Only called at the end of the string or statement
-        T_NULL   =  0,
-        T_EOF    = -1,
-        T_ENTER  = -2,
-
-        // commands
-        T_QRY_SELECT = -3,
-        T_QRY_DELETE = -4,
-        T_QRY_UPDATE = -5,
-        T_QRY_INSERT = -6,
-        T_QRY_CREATE = -7,
-
-        // Keywords        
-        T_KEY_FROM   = -12,
-        T_KEY_WHERE  = -13,
-        T_KEY_LIMIT  = -14,
-        T_KEY_ORDER  = -15,
-        T_KEY_BY     = -16,
-        T_KEY_GROUP  = -17,
-        T_KEY_INTO   = -18,
-        T_KEY_VALUES = -19,
-        T_KEY_JOIN   = -20,
-        T_KEY_ON     = -21,
-        T_KEY_AS     = -22,
-        T_KEY_TABLE  = -23,
-
-        // Raw values or variables
-        T_RAW_FLOAT  = -30,
-        T_RAW_STR    = -31,
-        T_RAW_VAR    = -32,
-    };
-
-    /* Defines precendence for binary operations */
-    static std::unordered_map<char, int> LexerBinOpPrecedent = {
-        {'+', 10},
-        {'-', 10},
-        {'/', 20},
-        {'*', 20}
-    };
-
-    /* Defines */
-    static std::unordered_map<std::string, int> LexerKeywords = {
-        {"AS",     T_KEY_AS},
-        {"BY",     T_KEY_BY},
-        {"CREATE", T_QRY_CREATE},
-        {"DELETE", T_QRY_DELETE},
-        {"FROM",   T_KEY_FROM},
-        {"GROUP",  T_KEY_GROUP},
-        {"INSERT", T_QRY_INSERT},
-        {"INTO",   T_KEY_INTO},
-        {"JOIN",   T_KEY_JOIN},
-        {"LIMIT",  T_KEY_LIMIT},
-        {"ORDER",  T_KEY_ORDER},
-        {"ON",     T_KEY_ON},
-        {"SELECT", T_QRY_SELECT},
-        {"TABLE",  T_KEY_TABLE},
-        {"UPDATE", T_QRY_UPDATE},
-        {"VALUES", T_KEY_VALUES},
-        {"WHERE",  T_KEY_WHERE}
-    };
-
-
-    static std::string LexerString;
-    static float       LexerFloat;
-    static int         LexerInteger;
-    static Tok         CurrToken;
-
-
-    Tok GetToken() {
-        // Initialize with space so we dont return on the first loop
-        static int LastChar = ' ';
-        // Have to catch the newlines before they get eaten
-        if (LastChar == '\n' || LastChar == '\r') {
-            LastChar = ' ';
-            return T_ENTER;
-        }
-        
-        if (LastChar == ';') {
-            LastChar = ' ';
-            return T_NULL;
-        }
-
-        // strip out the initial whitespace.
-        while (isspace(LastChar))
-            LastChar = getchar();
-
-        // Parse alphanumberic tokens
-        if (isalpha(LastChar)) {
-            // Fill in the string
-            // TODO: Optimize, use string_view
-            char FirstChar = LastChar;
-            LexerString = ::toupper(FirstChar);
-            while (isalnum((LastChar = getchar())))
-                LexerString += ::toupper(LastChar);
-
-            auto keyword = LexerKeywords.find(LexerString);
-            if ( keyword != LexerKeywords.end() )
-                return static_cast<Tok>(keyword->second);
-
-            return T_RAW_VAR;
-        }
-
-        // Parse string literals
-        if (LastChar == '"' || LastChar == '\'') {
-            int terminating_char = LastChar;
-
-        }
-
-        // Parse numbers
-        if (isdigit(LastChar) || LastChar == '.') {
-            std::string NumStr;
-        
-            do {
-                NumStr += LastChar;
-                LastChar = getchar();
-            } while (isdigit(LastChar) || LastChar == '.');
-
-            LexerFloat = strtof(NumStr.c_str(), 0);
-            return T_RAW_FLOAT;
-        }
-
-        // Remove comments
-        if (LastChar == '#') {
-            // Comment until end of line.
-            do
-                LastChar = getchar();
-            while (LastChar != EOF && LastChar != '\n' && LastChar != '\r');
-
-            if (LastChar != EOF) return GetToken();
-
-            // Check for end of file.  Don't eat the EOF.
-            if (LastChar == EOF) return T_EOF;
-
-        }
-
-        // Otherwise, just return the character as its ascii value.
-        int PrevChar = LastChar;
-        LastChar = getchar();
-        return (Tok) PrevChar;
-    }
-
-    static Tok GetNextToken() {
-        return CurrToken = GetToken();
-    }
 
     /* Expressions */
     class Expr {
@@ -179,7 +29,14 @@ namespace asql {
     public:
         FloatExpr(float number): number{number} {}
         float number;
-        virtual float eval() { return number;}
+        float eval() { return number;}
+    };
+
+    class IntExpr: public Expr {
+    public:
+        IntExpr(int number): number{number} {}
+        int number;
+        float eval() { return number;}
     };
 
     class BinaryExpr: public Expr {
@@ -192,7 +49,6 @@ namespace asql {
             virtual float eval() {
                 auto l = lhs->eval();
                 auto r = rhs->eval();
-                printf("l: %.4f, r: %.4f, l%cr = %.4f", l, r, l+r);
 
                 switch (op) {
                 case '*': return l * r;
@@ -209,7 +65,7 @@ namespace asql {
     };
 
     static int GetTokPrecedence() {
-        if (auto f = LexerBinOpPrecedent.find(CurrToken); f != LexerBinOpPrecedent.end())
+        if (auto f = LexerBinOpPrecedent.find(GetCurrentToken()); f != LexerBinOpPrecedent.end())
             return f->second;
         return -1;
     }
@@ -229,7 +85,7 @@ namespace asql {
         if (!e)
             return nullptr;
 
-        if (CurrToken != ')') {
+        if (GetCurrentToken() != ')') {
             // Log an error
             return nullptr;
         }
@@ -250,7 +106,7 @@ namespace asql {
                 return lhs;
 
             // save the operator and advance to the next token
-            int binOp = CurrToken;
+            int binOp = GetCurrentToken();
             GetNextToken();
             auto rhs = ParsePrimaryExpr();
             
@@ -267,21 +123,28 @@ namespace asql {
                     return nullptr;
             }
 
-            lhs = std::make_unique<Expr>(BinaryExpr(binOp, std::move(lhs), std::move(rhs)));
+            lhs = std::make_unique<BinaryExpr>(binOp, std::move(lhs), std::move(rhs));
         }
         
     }
 
     static std::unique_ptr<FloatExpr> ParseFloat()
     {
-        auto e = std::make_unique<FloatExpr>(FloatExpr(LexerFloat));
+        auto e = std::make_unique<FloatExpr>(LexerFloat);
+        GetNextToken();
+        return e;
+    }
+
+    static std::unique_ptr<IntExpr> ParseInt()
+    {
+        auto e = std::make_unique<IntExpr>(LexerInteger);
         GetNextToken();
         return e;
     }
 
     static std::unique_ptr<Expr> ParseIdentifier()
     {
-        auto e = std::make_unique<VariableExpr>(VariableExpr(LexerString));
+        auto e = std::make_unique<VariableExpr>(LexerString);
         GetNextToken();
         return e;
     }
@@ -289,7 +152,7 @@ namespace asql {
 
     static std::unique_ptr<Expr> ParsePrimaryExpr()
     {
-        switch(CurrToken)
+        switch(GetCurrentToken())
         {
             case '(':
                 return ParseParenExpr();
@@ -297,10 +160,12 @@ namespace asql {
                 return ParseFloat();
             case T_RAW_VAR:
                 return ParseIdentifier();
+            case T_RAW_INT:
+                return ParseInt();
             //case '\'':
             //case '\"':
             default:
-                printf("Can't parse primary expression: %d\n", CurrToken);
+                printf("Can't parse primary expression: %d\n", GetCurrentToken());
                 return nullptr;
         }
     }
@@ -340,11 +205,10 @@ namespace asql {
             // Check for identifier for the column
             // check for AS identifier
 
-            if (CurrToken != ',')
+            if (GetCurrentToken() != ',')
                 break;            
         }
 
-        double result = 0;
         printf("Parsed select args: ");
         for (auto &arg : SelectArgs)
         {
@@ -357,15 +221,7 @@ namespace asql {
         
     }
 
-    void ClearTokenLineBuffer()
-    {
-        while (CurrToken != asql::T_ENTER && CurrToken != asql::T_NULL)
-            asql::GetNextToken();
-    }
-}
-
-
-int main()
+int repl()
 {
 
     std::vector<std::unique_ptr<asql::Query>> q;
@@ -377,15 +233,11 @@ int main()
         switch (token)
         {
         case asql::T_EOF:
-            return 0;
+            return -1;
 
         case asql::T_NULL:
-            printf("NULL");
-            //asql::ParseExpression(v);
-            break;
-
         case asql::T_ENTER:
-            printf("Enter\n");
+            printf("Enter or NULL: %d\n", token);
             break;
 
         case asql::T_QRY_SELECT:
@@ -395,7 +247,6 @@ int main()
                 break;
             }
 
-            printf("failied to parse query!\n");
             asql::ClearTokenLineBuffer();
             break;
 
@@ -415,5 +266,6 @@ int main()
         }
     }
 
-    return 0;
+}
+
 }
