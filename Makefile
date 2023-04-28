@@ -20,10 +20,10 @@ CPPFLAGS := -g $(WARNINGS) -std=c++17 -fno-exceptions $(INCLUDES)
 .SUFFIXES: .o .cpp
 
 %.o: %.cpp
-	$(CPP) $(CPPFLAGS) -c $< -o $@ $(CPPFLAGS)
+	@$(CPP) $(CPPFLAGS) -c $< -o $@ $(CPPFLAGS)
 
 build: $(CPP_OBJS)
-	$(CPP) $(CPPFLAGS) $(CPP_OBJS) -o $(BIN)
+	@$(CPP) $(CPPFLAGS) $(CPP_OBJS) -o $(BIN)
 
 run: build
 	@$(BIN) 

@@ -52,8 +52,9 @@ namespace asql
 
     void ClearTokenLineBuffer()
     {
-        while (CurrToken != asql::T_ENTER && CurrToken != asql::T_NULL)
+        while (CurrToken != asql::T_ENTER)
             asql::GetNextToken();
+        
     }
 
     Tok GetCurrentToken()
@@ -64,10 +65,10 @@ namespace asql
     /*
     * The main tokenising function. i.e its job is to scan characters and figure out if it has run into
     * a string, an number (int/float), some sort of variable name, function name etc...
-    * The parser is the one that figures out if its all valid 
+    * The parser is the one that figures out if it's valid SQL
     */
     Tok GetToken() {
-        // Initialize with space so we dont return on the first loop
+        // Initialize with space to hit the isspace(...) and call getchar() initially
         static int LastChar = ' ';
         // Have to catch the newlines before they get eaten
         if (LastChar == '\n' || LastChar == '\r') {
@@ -84,15 +85,17 @@ namespace asql
         while (isspace(LastChar))
             LastChar = getchar();
 
-        // Parse alphanumberic tokens
+        // Parse alphanumeric tokens
         if (isalpha(LastChar)) {
-            // Fill in the string
-            // TODO: Optimize, use string_view
             char FirstChar = LastChar;
             LexerString = ::toupper(FirstChar);
+
+            // TODO: Check for '.' too so that we can parse aliases
+            // i.e select a.id from a;
             while (isalnum((LastChar = getchar())))
                 LexerString += ::toupper(LastChar);
 
+            // check if its a keyword like SELECT etc...
             auto keyword = LexerKeywords.find(LexerString);
             if ( keyword != LexerKeywords.end() )
                 return static_cast<Tok>(keyword->second);
@@ -102,31 +105,36 @@ namespace asql
 
         // Parse string literals
         if (LastChar == '"' || LastChar == '\'') {
-            int terminating_char = LastChar;
-
+            int TermChar = LastChar;
+            LexerString.clear();
+            while ((LastChar = getchar()) != TermChar)
+                LexerString += LastChar;
+            
+            return T_RAW_STR;
         }
 
         // Parse numbers
         if (isdigit(LastChar)) {
-            std::string NumStr;
+            LexerString.clear();
         
             do {
-                NumStr += LastChar;
+                LexerString += LastChar;
                 LastChar = getchar();
             } while (isdigit(LastChar));
 
+            // If the token ends with 1 of these characters, assume its an int
             if (isspace(LastChar) || LastChar == '+' || LastChar == '-' || LastChar == '/' || LastChar == '*' || LastChar == ';' || LastChar == ')' || LastChar == ',') {
-                LexerInteger = atoi(NumStr.c_str());
+                LexerInteger = atoi(LexerString.c_str());
                 return T_RAW_INT;
             }
 
             // Only valid option from this point is a floating point (with 1 decimal point)
             if (LastChar != '.') {
-                printf("Parse error near character '%c'\n", LastChar);
+                printf("Unknown token after '%s'\n", LexerString.c_str());
                 return T_EOF;
             }
 
-            LexerFloat = strtof(NumStr.c_str(), 0);
+            LexerFloat = strtof(LexerString.c_str(), 0);
             return T_RAW_FLOAT;
         }
 
@@ -137,11 +145,11 @@ namespace asql
                 LastChar = getchar();
             while (LastChar != EOF && LastChar != '\n' && LastChar != '\r');
 
-            if (LastChar != EOF) return GetToken();
-
-            // Check for end of file. Don't eat the EOF.
-            if (LastChar == EOF) return T_EOF;
-
+            // If theres more, keep parsing
+            if (LastChar != EOF)
+                return GetToken();
+            
+            return T_EOF;
         }
 
         // Otherwise, just return the character as its ascii value.
