@@ -11,6 +11,7 @@ namespace asql {
         T_CLOSE_PAREN = ')',
         T_SEMI_COLON  = ';',
         T_EQUALS      = '=',
+        T_DOT         = '.',
 
         // Only called at the end of the string or statement
         T_NULL        =  0,

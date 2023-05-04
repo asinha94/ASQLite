@@ -43,7 +43,6 @@ namespace asql {
         return 0;
     }
     
-
     static int GetTokPrecedence() {
         if (auto f = LexerBinOpPrecedent.find(GetCurrentToken()); f != LexerBinOpPrecedent.end())
             return f->second;
@@ -131,9 +130,23 @@ namespace asql {
 
     static std::unique_ptr<Expr> ParseIdentifier()
     {
-        auto e = std::make_unique<VariableExpr>(LexerString);
+        auto first = LexerString;
+
+        // Look for an expression with a qualifier e.g select a.x from a
+        auto token = GetNextToken();
+        if (token != T_DOT)
+            return std::make_unique<VariableExpr>(first);
+
+        // Token after HAS to be a variable name
+        // e.g 'select a.1 from a' is invalid
+        if (GetNextToken() != T_RAW_VAR) {
+            printf("Invalid expression after %s. Expected column name\n", first.c_str());
+            return nullptr;
+        }
+        auto f = std::make_unique<VariableExpr>(LexerString);
+        f->qualifier = first;
         GetNextToken();
-        return e;
+        return f;
     }
 
 
@@ -165,28 +178,29 @@ namespace asql {
         return ParseBinOpenRHS(0, std::move(e));
     }
 
-    static std::unique_ptr<Query> ParseSelectQuery()
+    static void ParseSelectQuery()
     {
+        SelectQuery s;
         Tok token;
 
         /* Parse the output arguments */
-        std::vector<std::unique_ptr<Expr>> SelectArgs;
         while ( true ) {
-            // advance to the next expression
+             
+            // advance to the next expression and save a copy
             GetNextToken();
             auto e = ParseExpr();
             if (!e)
-                return nullptr;
+                return;
 
             // Parse the alias if there is one
             token = GetCurrentToken();
             switch(token) {
             case T_KEY_AS:
                 token = GetNextToken();
-                // Allow the fallthrough if the alias is found
+                // fallthrough to STR/VAR if alias is found
                 if (token != T_RAW_STR && token != T_RAW_VAR) {
                     printf("Unknown token after 'AS' in SELECT clause: %d\n", token);
-                    return nullptr;
+                    return;
                 }
             case T_RAW_STR:
             case T_RAW_VAR:
@@ -197,7 +211,7 @@ namespace asql {
             }
 
             // Append the output variable
-            SelectArgs.push_back(std::move(e));
+            s.columns.push_back(std::move(e));
 
             // Parse another output arg or move onto the table
             if (token != T_COMMA)
@@ -205,7 +219,6 @@ namespace asql {
         }
 
         /* Parse the Table information if provided */
-        std::vector<Table> SelectTables;
         if (GetCurrentToken() == T_KEY_FROM) {
             // Get list of tables to cross-join
             while ( true ) {
@@ -214,7 +227,7 @@ namespace asql {
                 // TODO: Support raw tuples as tables
                 if (token != T_RAW_VAR) {
                     printf("Invalid table name in FROM clause\n");
-                    return nullptr;
+                    return;
                 }
 
                 Table t{LexerString};
@@ -227,7 +240,7 @@ namespace asql {
                     // Allow the fallthrough if the if fails
                     if (token != T_RAW_STR && token != T_RAW_VAR) {
                         printf("Unknown token after 'AS' in FROM clause: %d\n", token);
-                        return nullptr;
+                        return;
                     }
                 case T_RAW_STR:
                 case T_RAW_VAR:
@@ -241,14 +254,13 @@ namespace asql {
                 }
 
                 // Parse another table or move on
-                SelectTables.push_back(t);
+                s.tables.push_back(t);
                 if (token != T_COMMA)
                     break;
             }
         }
 
         /* Parse where clause */
-        std::vector<Filter> SelectFilters;
         if (token == T_KEY_WHERE) {
             while ( true ) {
 
@@ -256,24 +268,24 @@ namespace asql {
                 auto lhs = ParseExpr();
                 if (!lhs) {
                     printf("Failed to parse WHERE clause expression\n");
-                    return nullptr;
+                    return;
                 }
 
                 token = GetCurrentToken();
                 // TODO: Support other operators e.g '!='
                 if (token != T_EQUALS) {
                     printf("Invalid WHERE clause expression");
-                    return nullptr;
+                    return;
                 }
 
                 token = GetNextToken();
                 auto rhs = ParseExpr();
                 if (!rhs) {
                     printf("Failed to parse WHERE clause expression\n");
-                    return nullptr;
+                    return;
                 }
 
-                SelectFilters.emplace_back(Filter{std::move(lhs), std::move(rhs), EO_EQUALS});
+                s.filters.emplace_back(Filter{std::move(lhs), std::move(rhs), EO_EQUALS});
 
                 if (GetCurrentToken() != T_COMMA) {
                     break;
@@ -286,41 +298,23 @@ namespace asql {
         /* Group clause */
 
         /* Limit clause */
-        int limit = -1;
         if (GetCurrentToken() == T_KEY_LIMIT) {
             token = GetNextToken();
             if (token != T_RAW_INT) {
                 printf("Invalid token in LIMIT clause\n");
-                return nullptr;
+                return;
             }
+            // TODO: make a generic evaluatable expression
             auto l = ParseInt();
-            limit = l->number;
+            s.limit = l->number;
         }
 
+        s.retrieve();
 
-
-        printf("| ");
-        for (auto &arg : SelectArgs)
-        {
-            printf("%s | ", arg->GetAlias().c_str());
-        }
-        printf("\n");
-
-        printf("| ");
-        for (auto &arg : SelectArgs)
-        {
-            printf("%s | ", arg->GetAlias().c_str());
-        }
-        printf("\n");
-        return nullptr;
-        
     }
 
 int repl()
 {
-
-    std::vector<std::unique_ptr<asql::Query>> q;
-    std::unique_ptr<asql::Query> qry = nullptr;
  
     while ( true ) {
         auto token = GetCurrentToken();
@@ -337,12 +331,7 @@ int repl()
             break;
 
         case asql::T_QRY_SELECT:
-            qry = asql::ParseSelectQuery();
-            if (qry) {
-                q.push_back(std::move(qry));
-                break;
-            }
-
+            asql::ParseSelectQuery();
             //asql::ClearTokenLineBuffer();
             break;
 
