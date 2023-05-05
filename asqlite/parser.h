@@ -13,7 +13,7 @@ namespace asql {
         virtual ~Expr() = default;
         virtual float eval() const { return 0; };
         virtual std::string GetAlias() const { return alias; }
-        virtual std::vector<Expr> GetVariables() const {return {}; }; 
+        virtual std::vector<const Expr*> GetVariables() const {return {}; }; 
         std::string alias;
     };
 
@@ -34,7 +34,7 @@ namespace asql {
         VariableExpr(const std::string &name): Expr{name}, name{name} {}
         std::string name;
         std::string qualifier;
-        std::vector<Expr> GetVariables() const { return {*this}; }
+        std::vector<const Expr*> GetVariables() const { return {this}; }
     };
 
 
@@ -72,6 +72,7 @@ namespace asql {
         
         float eval() const;
         std::string GetAlias() const;
+        std::vector<const Expr*> GetVariables() const;
         
         int op;
         std::unique_ptr<Expr> lhs;

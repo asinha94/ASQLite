@@ -90,9 +90,8 @@ namespace asql
             char FirstChar = LastChar;
             LexerString = ::toupper(FirstChar);
 
-            // TODO: Check for '.' too so that we can parse aliases
-            // i.e select a.id from a;
-            while (isalnum((LastChar = getchar())))
+            // TODO: Check for _
+            while ( isalnum((LastChar = getchar())) || LastChar == '_')
                 LexerString += ::toupper(LastChar);
 
             // check if its a keyword like SELECT etc...

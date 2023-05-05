@@ -42,6 +42,14 @@ namespace asql {
         }
         return 0;
     }
+
+    std::vector<const Expr*> BinaryExpr::GetVariables() const
+    {
+        auto lv = lhs->GetVariables();
+        auto rv = rhs->GetVariables();
+        lv.insert(lv.end(), rv.begin(), rv.end());
+        return lv;
+    }
     
     static int GetTokPrecedence() {
         if (auto f = LexerBinOpPrecedent.find(GetCurrentToken()); f != LexerBinOpPrecedent.end())
@@ -224,14 +232,13 @@ namespace asql {
             while ( true ) {
                 token = GetNextToken();
 
-                // TODO: Support raw tuples as tables
+                // TODO: Support raw tuples as tables?
                 if (token != T_RAW_VAR) {
                     printf("Invalid table name in FROM clause\n");
                     return;
                 }
 
                 Table t{LexerString};
-
                 // Retrieve alias if available
                 token = GetNextToken();
                 switch(token) {
@@ -248,8 +255,6 @@ namespace asql {
                     token = GetNextToken();
                     break;
                 default:
-                    // Use name as alias
-                    t.alias = t.name;
                     break;
                 }
 
@@ -309,7 +314,7 @@ namespace asql {
             s.limit = l->number;
         }
 
-        s.retrieve();
+        s.Validate();
 
     }
 
