@@ -1,6 +1,6 @@
 #include <algorithm>
 #include <unordered_set>
-#include "database.h"
+#include "query.h"
 
 
 namespace asql {
@@ -45,8 +45,10 @@ namespace asql {
         /* Check that all the columns listed can be found in the FROM tables */
         std::unordered_map<std::string, std::unordered_set<std::string>> table_references;
         for (const auto &column: columns) {
-            for (const auto var: column->GetVariables()) {
 
+            const auto& is_binary_expression = dynamic_cast<const BinaryExpr*>(column.get());
+
+            for (const auto var: column->GetVariables()) {
                 // Check the qualified tables first i.e select a.x from a
                 auto var_expr = dynamic_cast<const VariableExpr*>(var);
                 if (var_expr->qualifier.size()) {
@@ -88,6 +90,7 @@ namespace asql {
                         }
                     }
 
+                    // TODO: If (count != 1) to prevent branches?
                     if (!found) {
                         printf("Unknown column '%s' in SELECT clause\n", var_expr->name.c_str()); //
                         return;

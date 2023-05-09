@@ -3,7 +3,7 @@
 
 #include "parser.h"
 #include "lexer.h"
-#include "database.h"
+#include "query.h"
 
 
 namespace asql {
