@@ -68,6 +68,8 @@ namespace asql {
                         return;
                     }
 
+                    // If part of a binary expression, the column type can't be a string
+
                     auto& t = table_references[dt->first];
                     t.emplace(var_expr->name);
                     
